@@ -2,7 +2,7 @@ name: Docker Image CI (feature)
 
 on:
   push:
-    branches: [ feature* ]
+    branches: [ feature/wechat ]
 
 jobs:
   docker:
