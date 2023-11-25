@@ -8,7 +8,7 @@ export type Message = {
 
 export type History = {
   type: string;
-  message: string;
+  text: string;
 }[];
 
 type State = {
@@ -61,7 +61,7 @@ export const useStoreMessage = create<State>((set) => ({
   setMessages: (messages) => set({ messages }),
   history: [],
   setHistory: (history) => set({ history }),
-  streaming: false,
+  streaming: true,
   setStreaming: (streaming) => set({ streaming }),
   isFirstMessage: true,
   setIsFirstMessage: (isFirstMessage) => set({ isFirstMessage }),

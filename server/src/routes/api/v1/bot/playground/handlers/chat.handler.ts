@@ -1,26 +1,30 @@
 import { FastifyReply, FastifyRequest } from "fastify";
 import { ChatRequestBody } from "./types";
-import { DialoqbaseVectorStore } from "../../../utils/store";
-import { embeddings } from "../../../utils/embeddings";
-import { chatModelProvider } from "../../../utils/models";
+import { DialoqbaseVectorStore } from "../../../../../../utils/store";
+import { embeddings } from "../../../../../../utils/embeddings";
+import { chatModelProvider } from "../../../../../../utils/models";
+import { DialoqbaseHybridRetrival } from "../../../../../../utils/hybrid";
 import { BaseRetriever } from "langchain/schema/retriever";
-import { DialoqbaseHybridRetrival } from "../../../utils/hybrid";
 import { Document } from "langchain/document";
-import { createChain, groupMessagesByConversation } from "../../../chain";
+import {
+  createChain,
+  groupMessagesByConversation,
+} from "../../../../../../chain";
 
 export const chatRequestHandler = async (
   request: FastifyRequest<ChatRequestBody>,
   reply: FastifyReply
 ) => {
+  const bot_id = request.params.id;
+
   const { message, history, history_id } = request.body;
   try {
-    const public_id = request.params.id;
-
     const prisma = request.server.prisma;
 
     const bot = await prisma.bot.findFirst({
       where: {
-        publicId: public_id,
+        id: bot_id,
+        user_id: request.user.user_id,
       },
     });
 
@@ -42,28 +46,6 @@ export const chatRequestHandler = async (
           },
         ],
       };
-    }
-
-    if (bot.bot_protect) {
-      if (!request.session.get("is_bot_allowed")) {
-        return {
-          bot: {
-            text: "You are not allowed to chat with this bot.",
-            sourceDocuments: [],
-          },
-          history: [
-            ...history,
-            {
-              type: "human",
-              text: message,
-            },
-            {
-              type: "ai",
-              text: "You are not allowed to chat with this bot.",
-            },
-          ],
-        };
-      }
     }
 
     const temperature = bot.temperature;
@@ -118,7 +100,7 @@ export const chatRequestHandler = async (
     if (!modelinfo) {
       return {
         bot: {
-          text: "There was an error processing your request.",
+          text: "Unable to find model",
           sourceDocuments: [],
         },
         history: [
@@ -129,7 +111,7 @@ export const chatRequestHandler = async (
           },
           {
             type: "ai",
-            text: "There was an error processing your request.",
+            text: "Unable to find model",
           },
         ],
       };
@@ -156,6 +138,8 @@ export const chatRequestHandler = async (
       retriever,
     });
 
+    console.log("sdas", history);
+
     const botResponse = await chain.invoke({
       question: sanitizedQuestion,
       chat_history: groupMessagesByConversation(
@@ -167,17 +151,32 @@ export const chatRequestHandler = async (
     });
 
     const documents = await documentPromise;
+    let hh = history_id;
 
-    await prisma.botWebHistory.create({
-      data: {
-        chat_id: history_id,
-        bot_id: bot.id,
-        bot: botResponse,
-        human: message,
-        metadata: {
-          ip: request?.ip,
-          user_agent: request?.headers["user-agent"],
+    if (!hh) {
+      const newHistory = await prisma.botPlayground.create({
+        data: {
+          botId: bot.id,
+          title: message,
         },
+      });
+      hh = newHistory.id;
+    }
+
+    await prisma.botPlaygroundMessage.create({
+      data: {
+        type: "human",
+        message: message,
+        botPlaygroundId: hh,
+      },
+    });
+
+    await prisma.botPlaygroundMessage.create({
+      data: {
+        type: "ai",
+        message: botResponse,
+        botPlaygroundId: hh,
+        isBot: true,
         sources: documents.map((doc) => {
           return {
             ...doc,
@@ -224,7 +223,7 @@ export const chatRequestHandler = async (
   }
 };
 
-export function nextTick() {
+function nextTick() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
@@ -232,24 +231,16 @@ export const chatRequestStreamHandler = async (
   request: FastifyRequest<ChatRequestBody>,
   reply: FastifyReply
 ) => {
+  const bot_id = request.params.id;
+
   const { message, history, history_id } = request.body;
-
   try {
-    const public_id = request.params.id;
-    // get user meta info from request
-    // const meta = request.headers["user-agent"];
-    // ip address
-
-    // const history = JSON.parse(chatHistory) as {
-    //   type: string;
-    //   text: string;
-    // }[];
-
     const prisma = request.server.prisma;
 
     const bot = await prisma.bot.findFirst({
       where: {
-        publicId: public_id,
+        id: bot_id,
+        user_id: request.user.user_id,
       },
     });
 
@@ -271,40 +262,6 @@ export const chatRequestStreamHandler = async (
           },
         ],
       };
-    }
-
-    if (bot.bot_protect) {
-      if (!request.session.get("is_bot_allowed")) {
-        console.log("not allowed");
-
-        reply.raw.setHeader("Content-Type", "text/event-stream");
-
-        reply.sse({
-          event: "result",
-          id: "",
-          data: JSON.stringify({
-            bot: {
-              text: "You are not allowed to chat with this bot.",
-              sourceDocuments: [],
-            },
-            history: [
-              ...history,
-              {
-                type: "human",
-                text: message,
-              },
-              {
-                type: "ai",
-                text: "You are not allowed to chat with this bot.",
-              },
-            ],
-          }),
-        });
-
-        await nextTick();
-
-        return reply.raw.end();
-      }
     }
 
     const temperature = bot.temperature;
@@ -349,10 +306,6 @@ export const chatRequestStreamHandler = async (
       });
     }
 
-    reply.raw.on("close", () => {
-      console.log("closed");
-    });
-
     const modelinfo = await prisma.dialoqbaseModels.findFirst({
       where: {
         model_id: bot.model,
@@ -360,7 +313,6 @@ export const chatRequestStreamHandler = async (
         deleted: false,
       },
     });
-
     if (!modelinfo) {
       reply.raw.setHeader("Content-Type", "text/event-stream");
 
@@ -399,30 +351,13 @@ export const chatRequestStreamHandler = async (
       }
     }
 
+    let response: string = "";
     const streamedModel = chatModelProvider(
       bot.provider,
       bot.model,
       temperature,
       {
         streaming: true,
-        callbacks: [
-          {
-            handleLLMNewToken(token: string) {
-              // if (token !== '[DONE]') {
-              // console.log(token);
-              return reply.sse({
-                id: "",
-                event: "chunk",
-                data: JSON.stringify({
-                  message: token || "",
-                }),
-              });
-              // } else {
-              // console.log("done");
-              // }
-            },
-          },
-        ],
         ...botConfig,
       }
     );
@@ -432,10 +367,13 @@ export const chatRequestStreamHandler = async (
       bot.model,
       temperature,
       {
-        streaming: false,
         ...botConfig,
       }
     );
+
+    reply.raw.on("close", () => {
+      // close the model
+    });
 
     const chain = createChain({
       llm: streamedModel,
@@ -445,7 +383,7 @@ export const chatRequestStreamHandler = async (
       retriever,
     });
 
-    let response = await chain.invoke({
+    let stream = await chain.stream({
       question: sanitizedQuestion,
       chat_history: groupMessagesByConversation(
         history.map((message) => ({
@@ -455,18 +393,44 @@ export const chatRequestStreamHandler = async (
       ),
     });
 
+    for await (const token of stream) {
+      reply.sse({
+        id: "",
+        event: "chunk",
+        data: JSON.stringify({
+          message: token || "",
+        }),
+      });
+      response += token;
+    }
+
+    let historyId = history_id;
     const documents = await documentPromise;
 
-    await prisma.botWebHistory.create({
-      data: {
-        chat_id: history_id,
-        bot_id: bot.id,
-        bot: response,
-        human: message,
-        metadata: {
-          ip: request?.ip,
-          user_agent: request?.headers["user-agent"],
+    if (!historyId) {
+      const newHistory = await prisma.botPlayground.create({
+        data: {
+          botId: bot.id,
+          title: message,
         },
+      });
+      historyId = newHistory.id;
+    }
+
+    await prisma.botPlaygroundMessage.create({
+      data: {
+        type: "human",
+        message: message,
+        botPlaygroundId: historyId,
+      },
+    });
+
+    await prisma.botPlaygroundMessage.create({
+      data: {
+        type: "ai",
+        message: response,
+        botPlaygroundId: historyId,
+        isBot: true,
         sources: documents.map((doc) => {
           return {
             ...doc,
@@ -494,6 +458,7 @@ export const chatRequestStreamHandler = async (
             text: response,
           },
         ],
+        history_id: historyId,
       }),
     });
     await nextTick();

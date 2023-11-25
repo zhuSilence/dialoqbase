@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMessage } from "../../../hooks/useMessage";
 import { useForm } from "@mantine/form";
 import React from "react";
@@ -13,6 +13,8 @@ export const PlaygroundgForm = () => {
       isBot: false,
     },
   });
+
+  const client = useQueryClient();
 
   const {
     defaultSpeechToTextLanguage,
@@ -29,7 +31,6 @@ export const PlaygroundgForm = () => {
     listen,
     stop,
   } = useSpeechRecognition();
-
 
   React.useEffect(() => {
     const defaultLanguageFromLocalStorage = localStorage.getItem(
@@ -72,15 +73,8 @@ export const PlaygroundgForm = () => {
 
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   React.useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      const increaseHeight = () => {
-        textarea.style.height = "auto";
-        textarea.style.height = `${Math.min(textarea.scrollHeight, 300)}px`;
-      };
-      increaseHeight();
-      textarea.addEventListener("input", increaseHeight);
-      return () => textarea.removeEventListener("input", increaseHeight);
+    if (textareaRef.current) {
+      textareaRef.current.focus();
     }
   }, []);
 
@@ -88,6 +82,7 @@ export const PlaygroundgForm = () => {
     onSubmit,
     {
       onSuccess: () => {
+        client.invalidateQueries(["getBotPlaygroundHistory"]);
         form.setFieldValue("message", "");
       },
       onError: (error) => {
@@ -104,8 +99,8 @@ export const PlaygroundgForm = () => {
   };
 
   return (
-    <div className="p-3 ">
-      <div className="flex-grow space-y-6">
+    <div className="p-3 md:p-6 md:bg-white md:border md:rounded-t-xl">
+      <div className="flex-grow space-y-6 ">
         <div className="flex">
           <form
             onSubmit={form.onSubmit(async (value) => {
@@ -115,89 +110,88 @@ export const PlaygroundgForm = () => {
             })}
             className="shrink-0 flex-grow  flex items-center "
           >
-            <div className="flex flex-col w-full py-2 flex-grow md:py-3 md:pl-4 relative border border-black/10 bg-white dark:border-gray-900/50 dark:text-white dark:bg-gray-700 rounded-md shadow-[0_0_10px_rgba(0,0,0,0.10)] dark:shadow-[0_0_15px_rgba(0,0,0,0.10)]">
+            <div className="flex items-center p-2 rounded-full border  bg-gray-100 w-full">
               <textarea
-                // style={{ height: "48px !important" }}
-                disabled={isSending}
+                // disabled={isSendinhg}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  if (e.key === "Enter" && !e.shiftKey && !isSending) {
                     e.preventDefault();
                     form.onSubmit(async (value) => {
+                      if (value.message.trim().length === 0) {
+                        return;
+                      }
                       form.reset();
                       resetHeight();
                       await sendMessage(value.message);
-                      // reset the height of the textarea
                     })();
                   }
                 }}
                 ref={textareaRef}
-                rows={1}
-                className={`m-0 w-full resize-none border-0 bg-transparent p-0 pr-7 focus:ring-0 focus-visible:ring-0 dark:bg-transparent pl-2 md:pl-0 ${
-                  listening && "placeholder:italic"
-                }`}
+                // className={`min-h-[32px] w-full resize-none border-0 bg-transparent  py-[0.8rem] m-0 focus:ring-0 focus-visible:ring-0 dark:bg-transparent ${
+                //   listening && "placeholder:italic"
+                // }`}
+                className="rounded-full pl-4 pr-2 py-2 w-full resize-none bg-transparent focus-within:outline-none sm:text-sm focus:ring-0 focus-visible:ring-0 ring-0 dark:ring-0 border-0"
                 required
+                rows={1}
+                tabIndex={0}
                 placeholder={
                   !listening ? "Type your message…" : "Listening......"
                 }
                 {...form.getInputProps("message")}
               />
               {!hideListening && (
-                <div className="absolute flex items-center bottom-0.5 right-0.5">
-                  <button
-                    disabled={isSending}
-                    onClick={() => {
-                      if (!listening) {
-                        listen({
-                          lang: defaultSpeechToTextLanguage,
-                        });
-                      } else {
-                        stop();
-                      }
-                    }}
-                    type="button"
-                    className={`absolute p-1 rounded-md bottom-1.5 md:bottom-2 bg-transparent disabled:bg-gray-500 right-1 md:right-2 disabled:opacity-40 ${
-                      // add mic animation with rings when listening
-                      listening &&
-                      "animate-pulse ring-2 ring-blue-500 rounded-full ring-opacity-50"
-                    }`}
+                <button
+                  disabled={isSending}
+                  onClick={() => {
+                    if (!listening) {
+                      listen({
+                        lang: defaultSpeechToTextLanguage,
+                      });
+                    } else {
+                      stop();
+                    }
+                  }}
+                  type="button"
+                  className={`p-0 mr-2 text-gray-500  ${
+                    listening &&
+                    "animate-pulse ring-2 ring-blue-500 rounded-full ring-opacity-50"
+                  }`}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    className="h-6 w-6"
+                    viewBox="0 0 24 24"
                   >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      strokeWidth={1.5}
-                      stroke="currentColor"
-                      className="h-6 w-6 m-1 md:m-0"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
-                      />
-                    </svg>
-                  </button>
-                </div>
+                    <path d="M12 2a3 3 0 00-3 3v7a3 3 0 006 0V5a3 3 0 00-3-3z"></path>
+                    <path d="M19 10v2a7 7 0 01-14 0v-2"></path>
+                    <path d="M12 19L12 22"></path>
+                  </svg>
+                </button>
               )}
-            </div>
-            <button
-              disabled={isSending}
-              className="p-1 ml-3 rounded-md  bg-transparent disabled:bg-gray-500  disabled:opacity-40"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.5}
-                stroke="currentColor"
-                className="h-6 w-6 m-1 md:m-0"
+              <button
+                disabled={isSending || form.values.message.length === 0}
+                className="mx-2  flex items-center justify-center w-10 h-10  text-white bg-black rounded-xl disabled:opacity-50"
               >
-                <path
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  stroke="currentColor"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"
-                />
-              </svg>
-            </button>
+                  strokeWidth="2"
+                  className="h-6 w-6"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M9 10L4 15 9 20"></path>
+                  <path d="M20 4v7a4 4 0 01-4 4H4"></path>
+                </svg>
+              </button>
+            </div>
           </form>
         </div>
       </div>
